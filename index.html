@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Charity Gridiron Classic — 72-Team Tracker</title>
+<title>Gridiron Charity Classic — 72-Team Tracker</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap');
 
@@ -131,6 +131,19 @@ label.fl{display:block;font-family:var(--disp);font-weight:600;font-size:12px;le
 .banner.info{border-color:var(--line);background:var(--panel);color:var(--dim)}
 .empty{color:var(--dim);text-align:center;padding:48px 16px;font-size:14px}
 
+/* ---------- charity spotlight ---------- */
+.spot{display:flex;align-items:center;gap:14px;flex-wrap:wrap;border:1px solid var(--gold);border-radius:6px;
+  background:linear-gradient(140deg,#2a230e,#152438 62%);padding:14px 16px;margin-bottom:16px}
+.spot .slbl{font-family:var(--disp);font-weight:600;letter-spacing:.26em;font-size:11px;color:var(--gold);text-transform:uppercase}
+.spot .swk{color:var(--dim);font-size:11.5px;letter-spacing:.08em;margin-top:2px}
+.spot .avatar{width:42px;height:42px;border-radius:5px}
+.spot .spts{font-family:var(--disp);font-weight:700;font-size:24px;font-variant-numeric:tabular-nums}
+.spot .sch{margin-left:auto;text-align:right;max-width:360px;min-width:0}
+.spot .sch .for{color:var(--dim);font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-family:var(--disp);font-weight:600}
+.spot .sch .cname{font-family:var(--disp);font-weight:700;font-size:19px;text-transform:uppercase;color:var(--gold);overflow-wrap:anywhere}
+.spot .sch a{text-decoration:none}
+@media(max-width:560px){.spot .sch{margin-left:0;text-align:left}}
+
 footer{border-top:1px solid var(--line);margin-top:36px;padding-top:14px;color:var(--dim);font-size:12px}
 
 @media (max-width:920px){
@@ -152,8 +165,8 @@ footer{border-top:1px solid var(--line);margin-top:36px;padding-top:14px;color:v
 <div class="wrap">
   <header>
     <div class="brand">
-      <div class="eyebrow">72 teams · 6 conferences · one champion</div>
-      <h1 id="tname">Charity Gridiron Classic</h1>
+      <div class="eyebrow">72 teams · one champion</div>
+      <h1 id="tname">Gridiron Charity Classic</h1>
       <div class="sub" id="subline">Live standings, playoff picture and championship bracket, straight from Sleeper.</div>
     </div>
     <div class="statusbar">
@@ -179,9 +192,9 @@ const ROUND_NAMES = ['Round of 16', 'Quarterfinals', 'Semifinals', 'Championship
 const PAIRS = [[1,16],[8,9],[5,12],[4,13],[6,11],[3,14],[7,10],[2,15]];
 
 const S = {
-  cfg: { name: 'Charity Gridiron Classic', ids: ['', '', '', '', '', ''], playoffStart: 14 },
+  cfg: { name: 'Gridiron Charity Classic', ids: ['', '', '', '', '', ''], playoffStart: 14, charities: {} },
   nfl: null, leagues: [], teams: [], weekPoints: {},
-  tab: 'standings', errors: [], lastUpdated: null, loading: false, scoreWeek: null, viewOnly: false
+  tab: 'scoreboard', errors: [], lastUpdated: null, loading: false, scoreWeek: null, viewOnly: false
 };
 
 /* ---------- storage (artifact storage -> localStorage -> memory) ---------- */
@@ -208,6 +221,7 @@ async function fetchJSON(url) {
   return res.json();
 }
 function winPct(t) { const g = t.wins + t.losses + t.ties; return g ? (t.wins + 0.5 * t.ties) / g : 0; }
+function safeUrl(u) { u = String(u || '').trim(); if (!u) return null; if (!/^https?:\/\//i.test(u)) u = 'https://' + u; return u; }
 function cmpRecord(a, b) { return winPct(b) - winPct(a) || b.pf - a.pf || b.wins - a.wins; }
 function rec(t) { return t.wins + '-' + t.losses + (t.ties ? '-' + t.ties : ''); }
 function effWeek() {
@@ -231,6 +245,8 @@ function readHash() {
 }
 function shareUrl() {
   const cfg = { name: S.cfg.name, ids: S.cfg.ids.map(s => s.trim()).filter(Boolean), playoffStart: S.cfg.playoffStart, view: 1 };
+  const ch = S.cfg.charities || {};
+  if (Object.keys(ch).length) cfg.charities = ch;
   return location.origin === 'null' || location.protocol === 'file:'
     ? '#cfg=' + encodeURIComponent(JSON.stringify(cfg))
     : location.origin + location.pathname + '#cfg=' + encodeURIComponent(JSON.stringify(cfg));
@@ -246,6 +262,8 @@ async function refreshAll() {
     S.errors.push('Could not reach the Sleeper API. If you are viewing this inside Claude, download the file and open it in your own web browser (double-click it) — the in-app preview blocks outside connections.');
   }
   const ids = [...new Set(S.cfg.ids.map(s => s.trim()).filter(Boolean))];
+  const ew0 = effWeek();
+  if (!S.scoreWeek && ew0 >= 1 && ew0 <= 18) S.scoreWeek = ew0;
   const found = [];
   await Promise.all(ids.map(async id => {
     try {
@@ -264,6 +282,7 @@ async function refreshAll() {
   const ew = effWeek();
   const weeks = new Set();
   if (ew >= 1 && ew <= 18) weeks.add(ew);
+  if (ew > 1) weeks.add(Math.min(ew - 1, 18));
   for (let i = 0; i < 4; i++) { const w = S.cfg.playoffStart + i; if (w >= 1 && w <= 18 && w <= ew) weeks.add(w); }
   if (S.scoreWeek) weeks.add(S.scoreWeek);
   await Promise.all([...weeks].map(fetchWeekPoints));
@@ -356,9 +375,23 @@ function computeBracket(seeds) {
 }
 
 /* ---------- shell ---------- */
+function visibleTabs() {
+  const ew = effWeek();
+  const regEnd = S.cfg.playoffStart - 1;
+  const tabs = [['scoreboard', 'Scoreboard'], ['standings', 'Standings']];
+  if (ew >= 8 && ew <= regEnd) tabs.push(['picture', 'Playoff Picture']);
+  if (ew >= S.cfg.playoffStart) tabs.push(['bracket', 'Bracket']);
+  if (!S.viewOnly) tabs.push(['setup', 'Setup']);
+  return tabs;
+}
+function normalizeTab() {
+  const vis = visibleTabs().map(t => t[0]);
+  if (!vis.includes(S.tab)) S.tab = vis[0];
+}
 function renderShell() {
-  document.getElementById('tname').textContent = S.cfg.name || 'Charity Gridiron Classic';
-  document.title = (S.cfg.name || 'Charity Gridiron Classic') + ' — Tracker';
+  normalizeTab();
+  document.getElementById('tname').textContent = S.cfg.name || 'Gridiron Charity Classic';
+  document.title = (S.cfg.name || 'Gridiron Charity Classic') + ' — Tracker';
   const ew = effWeek();
   const wc = document.getElementById('weekchip');
   if (!S.nfl) wc.textContent = 'Sleeper: not connected';
@@ -369,8 +402,7 @@ function renderShell() {
   if (S.lastUpdated) { uc.style.display = ''; uc.textContent = 'Updated ' + S.lastUpdated.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
   const rb = document.getElementById('refreshbtn');
   rb.disabled = S.loading; rb.textContent = S.loading ? 'Refreshing…' : 'Refresh';
-  let tabs = [['standings', 'Standings'], ['picture', 'Playoff Picture'], ['bracket', 'Bracket'], ['scoreboard', 'Scoreboard'], ['setup', 'Setup']];
-  if (S.viewOnly) tabs = tabs.filter(t => t[0] !== 'setup');
+  const tabs = visibleTabs();
   document.getElementById('tabs').innerHTML = tabs.map(t =>
     '<button class="' + (S.tab === t[0] ? 'on' : '') + '" onclick="setTab(\'' + t[0] + '\')">' + t[1] + '</button>').join('');
 }
@@ -384,7 +416,7 @@ function doRefresh() { refreshAll(); }
 
 /* ---------- views ---------- */
 function render() {
-  if (S.viewOnly && S.tab === 'setup') S.tab = 'standings';
+  normalizeTab();
   const v = document.getElementById('view');
   let html = '';
   if (S.errors.length) html += '<div class="banner">' + S.errors.map(esc).join('<br>') + '</div>';
@@ -406,11 +438,42 @@ function teamCell(t, showLeague) {
     '<div class="towner">' + esc(showLeague ? t.leagueName : (t.owner ? '@' + t.owner : '')) + '</div></div></div>';
 }
 
+/* ---------- charity spotlight ---------- */
+function spotlightData() {
+  const ew = effWeek();
+  if (ew <= 1) return null;
+  const wk = Math.min(ew - 1, 18);
+  const m = S.weekPoints[wk];
+  if (!m) return null;
+  let best = null, bp = 0;
+  for (const t of S.teams) { const p = m[t.key]; if (p != null && p > bp) { bp = p; best = t; } }
+  return best ? { week: wk, team: best, pts: bp } : null;
+}
+function spotlightHtml() {
+  const sp = spotlightData();
+  if (!sp) return '';
+  const ch = (S.cfg.charities || {})[sp.team.key] || {};
+  const url = safeUrl(ch.u);
+  let cname;
+  if (ch.n) cname = url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(ch.n) + ' ↗</a>' : esc(ch.n);
+  else cname = '<span style="color:var(--dim);font-size:13px;text-transform:none;letter-spacing:0">Charity not listed yet</span>';
+  const r = sp.week - S.cfg.playoffStart;
+  const wkName = (r >= 0 && r < 4) ? ROUND_NAMES[r] + ' · Week ' + sp.week : 'Week ' + sp.week;
+  return '<div class="spot">' +
+    '<div><div class="slbl">Charity Spotlight</div><div class="swk">' + wkName + ' high score</div></div>' +
+    avatarHtml(sp.team) +
+    '<div style="min-width:0"><div class="tname">' + esc(sp.team.name) + '</div><div class="towner">' + esc(sp.team.leagueName) + '</div></div>' +
+    '<div class="spts">' + fmt(sp.pts) + '</div>' +
+    '<div class="sch"><div class="for">Playing for</div><div class="cname">' + cname + '</div></div>' +
+    '</div>';
+}
+
 function standingsView() {
   const field = playoffField();
   const champKeys = new Set(field.champs.map(t => t.key));
   const wildKeys = new Set(field.wild.map(t => t.key));
-  let out = '<div class="grid2">';
+  let out = spotlightHtml();
+  out += '<div class="grid2">';
   for (const L of S.leagues) {
     const ts = S.teams.filter(t => t.leagueId === L.id);
     const divs = [...new Set(ts.map(t => t.division))].sort((a, b) => a - b);
@@ -523,7 +586,8 @@ function scoreboardView() {
     const lbl = 'Week ' + i + (r >= 0 && r < 4 ? ' · ' + ROUND_NAMES[r] : '');
     opts += '<option value="' + i + '"' + (i === w ? ' selected' : '') + '>' + lbl + '</option>';
   }
-  let out = '<div class="card"><div class="hd"><h2>The 72 board</h2><div style="min-width:220px"><select onchange="setScoreWeek(this.value)" aria-label="Week">' + opts + '</select></div></div>';
+  let out = spotlightHtml();
+  out += '<div class="card"><div class="hd"><h2>The 72 board</h2><div style="min-width:220px"><select onchange="setScoreWeek(this.value)" aria-label="Week">' + opts + '</select></div></div>';
   out += '<table><tr><th class="l" style="width:34px">#</th><th class="l">Team</th><th>Points</th><th style="width:60px"></th></tr>';
   if (!S.weekPoints[w]) out += '<tr><td class="l" colspan="4" style="color:var(--dim)">Loading week ' + w + '…</td></tr>';
   else rows.forEach((r, i) => {
@@ -556,17 +620,41 @@ function setupView() {
     '</div></div><div class="card"><div class="hd"><h2>Share link</h2></div><div style="padding:14px">' +
     '<input type="text" readonly value="' + esc(shareUrl()) + '" onclick="this.select()">' +
     '<p class="help">Send this to your league mates — it opens the tracker pre-loaded with your leagues in view-only mode (no Setup tab). To make changes yourself, open the site by its plain address without the #cfg part.</p>' +
-    '</div></div></div></div>';
+    '</div></div></div></div>' + charitiesSetupHtml();
+}
+function charitiesSetupHtml() {
+  if (!S.teams.length) {
+    return '<div class="card"><div class="hd"><h2>Charity spotlight</h2></div><div style="padding:14px" class="help">Load your leagues first (Save &amp; load tournament above), then come back to this tab to assign each team\'s charity.</div></div>';
+  }
+  let out = '<div class="card"><div class="hd"><h2>Charity spotlight</h2><span class="meta">who each team plays for</span></div><div style="padding:8px 14px 14px">' +
+    '<p class="help">Each week, the previous week\'s top scorer has their charity featured in a banner at the top of the Standings page. The link is optional and makes the charity name clickable. Hit Save when you\'re done — assignments are included in your share link.</p>';
+  for (const L of S.leagues) {
+    out += '<div class="divlabel" style="padding-left:0">' + esc(L.league.name) + '</div>';
+    for (const t of S.teams.filter(x => x.leagueId === L.id)) {
+      const ch = (S.cfg.charities || {})[t.key] || {};
+      out += '<div class="frow"><span class="nm" style="display:block;width:180px;flex:none">' + esc(t.name) + '</span>' +
+        '<input type="text" placeholder="Charity name" value="' + esc(ch.n || '') + '" oninput="updCh(\'' + t.key + '\',\'n\',this.value)">' +
+        '<input type="text" placeholder="Link (optional)" value="' + esc(ch.u || '') + '" oninput="updCh(\'' + t.key + '\',\'u\',this.value)"></div>';
+    }
+  }
+  out += '<button class="primary" onclick="saveAndLoad()">Save charities</button></div></div>';
+  return out;
+}
+function updCh(key, f, v) {
+  const c = S.cfg.charities || (S.cfg.charities = {});
+  const e = c[key] || (c[key] = {});
+  e[f] = v.trim();
+  if (!e.n && !e.u) delete c[key];
 }
 function updId(i, v) { S.cfg.ids[i] = v; }
-function updName(v) { S.cfg.name = v; document.getElementById('tname').textContent = v || 'Charity Gridiron Classic'; }
+function updName(v) { S.cfg.name = v; document.getElementById('tname').textContent = v || 'Gridiron Charity Classic'; }
 function updPS(v) { const n = Number(v); if (n >= 2 && n <= 15) S.cfg.playoffStart = n; }
 function addLeague() { if (S.cfg.ids.length < MAX_LEAGUES) { S.cfg.ids.push(''); render(); } }
 function rmLeague(i) { S.cfg.ids.splice(i, 1); if (!S.cfg.ids.length) S.cfg.ids.push(''); render(); }
 async function saveAndLoad() {
   S.cfg.ids = S.cfg.ids.map(s => s.trim());
   await store.set('cgc:cfg', JSON.stringify(S.cfg));
-  S.tab = 'standings';
+  S.tab = 'scoreboard';
   refreshAll();
 }
 
@@ -574,12 +662,14 @@ async function saveAndLoad() {
 (async function init() {
   const h = readHash();
   if (h && Array.isArray(h.ids)) {
-    S.cfg = { name: h.name || S.cfg.name, ids: h.ids.slice(0, MAX_LEAGUES), playoffStart: Number(h.playoffStart) || 14 };
+    S.cfg = { name: h.name || S.cfg.name, ids: h.ids.slice(0, MAX_LEAGUES), playoffStart: Number(h.playoffStart) || 14,
+      charities: (h.charities && typeof h.charities === 'object') ? h.charities : {} };
     S.viewOnly = !!h.view;
     if (!S.cfg.ids.length) S.cfg.ids.push('');
   } else {
     const raw = await store.get('cgc:cfg');
-    if (raw) { try { const c = JSON.parse(raw); S.cfg = { name: c.name || S.cfg.name, ids: (c.ids || S.cfg.ids), playoffStart: Number(c.playoffStart) || 14 }; } catch (e) {} }
+    if (raw) { try { const c = JSON.parse(raw); S.cfg = { name: c.name || S.cfg.name, ids: (c.ids || S.cfg.ids), playoffStart: Number(c.playoffStart) || 14,
+      charities: (c.charities && typeof c.charities === 'object') ? c.charities : {} }; } catch (e) {} }
   }
   renderShell();
   if (S.cfg.ids.some(x => x && x.trim())) refreshAll();
