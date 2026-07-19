@@ -349,6 +349,21 @@ function playoffField() {
   const seeds = champs.concat(wild).map((t, i) => ({ seed: i + 1, team: t, auto: i < champs.length }));
   return { champs, wild, bubble, seeds };
 }
+function decideGame(a, b, week, ew) {
+  const pa = a ? getPts(week, a.team) : null;
+  const pb = b ? getPts(week, b.team) : null;
+  const locked = ew > week, live = ew === week;
+  let winner = null;
+  if (a && !b) winner = a;
+  else if (b && !a) winner = b;
+  else if (a && b && locked) {
+    if (pa != null || pb != null) {
+      const va = pa == null ? -1 : pa, vb = pb == null ? -1 : pb;
+      winner = va > vb ? a : (vb > va ? b : (a.seed < b.seed ? a : b));
+    } else winner = a.seed < b.seed ? a : b;
+  }
+  return { a, b, pa, pb, week, locked, live, winner };
+}
 function computeBracket(seeds) {
   const bySeed = {};
   for (const s of seeds) bySeed[s.seed] = s;
@@ -357,28 +372,17 @@ function computeBracket(seeds) {
   const rounds = [];
   for (let r = 0; r < 4; r++) {
     const week = S.cfg.playoffStart + r;
-    const locked = ew > week, live = ew === week;
-    const games = current.map(pair => {
-      const a = pair[0], b = pair[1];
-      const pa = a ? getPts(week, a.team) : null;
-      const pb = b ? getPts(week, b.team) : null;
-      let winner = null;
-      if (a && !b) winner = a;
-      else if (b && !a) winner = b;
-      else if (a && b && locked) {
-        if (pa != null || pb != null) {
-          const va = pa == null ? -1 : pa, vb = pb == null ? -1 : pb;
-          winner = va > vb ? a : (vb > va ? b : (a.seed < b.seed ? a : b));
-        } else winner = a.seed < b.seed ? a : b;
-      }
-      return { a, b, pa, pb, week, locked, live, winner };
-    });
-    rounds.push({ week, name: ROUND_NAMES[r], games, locked, live });
+    const games = current.map(pair => decideGame(pair[0], pair[1], week, ew));
+    rounds.push({ week, name: ROUND_NAMES[r], games, locked: ew > week, live: ew === week });
     const next = [];
     for (let i = 0; i < games.length; i += 2) next.push([games[i].winner, games[i + 1] ? games[i + 1].winner : null]);
     current = next;
   }
-  return rounds;
+  // third-place game: semifinal losers meet in the championship week
+  const sf = rounds[2].games;
+  const losers = sf.map(g => (g.winner && g.a && g.b) ? (g.winner.seed === g.a.seed ? g.b : g.a) : null);
+  const third = decideGame(losers[0], losers[1], S.cfg.playoffStart + 3, ew);
+  return { rounds, third };
 }
 
 /* ---------- shell ---------- */
@@ -449,12 +453,25 @@ function teamCell(t, showLeague) {
 function spotlightData() {
   const ew = effWeek();
   if (ew <= 1) return null;
-  const wk = Math.min(ew - 1, 18);
+  const wk = Math.min(ew - 1, 18, S.cfg.playoffStart + 3);
   const m = S.weekPoints[wk];
   if (!m) return null;
+  let elig = null;
+  if (wk >= S.cfg.playoffStart) {
+    const { rounds, third } = computeBracket(playoffField().seeds);
+    const r = wk - S.cfg.playoffStart;
+    const sides = [];
+    (rounds[r] ? rounds[r].games : []).forEach(g => { if (g.a) sides.push(g.a); if (g.b) sides.push(g.b); });
+    if (r === 3) { if (third.a) sides.push(third.a); if (third.b) sides.push(third.b); }
+    if (sides.length) elig = new Set(sides.map(s => s.team.key));
+  }
   let best = null, bp = 0;
-  for (const t of S.teams) { const p = m[t.key]; if (p != null && p > bp) { bp = p; best = t; } }
-  return best ? { week: wk, team: best, pts: bp } : null;
+  for (const t of S.teams) {
+    if (elig && !elig.has(t.key)) continue;
+    const p = m[t.key];
+    if (p != null && p > bp) { bp = p; best = t; }
+  }
+  return best ? { week: wk, team: best, pts: bp, playoff: !!elig } : null;
 }
 function spotlightHtml() {
   const sp = spotlightData();
@@ -467,7 +484,7 @@ function spotlightHtml() {
   const r = sp.week - S.cfg.playoffStart;
   const wkName = (r >= 0 && r < 4) ? ROUND_NAMES[r] + ' · Week ' + sp.week : 'Week ' + sp.week;
   return '<div class="spot">' +
-    '<div><div class="slbl">Charity Spotlight</div><div class="swk">' + wkName + ' high score</div></div>' +
+    '<div><div class="slbl">Charity Spotlight</div><div class="swk">' + wkName + ' high score' + (sp.playoff ? ' · playoff field only' : '') + '</div></div>' +
     avatarHtml(sp.team) +
     '<div style="min-width:0"><div class="tname">' + esc(sp.team.name) + '</div><div class="towner">' + esc(sp.team.leagueName) + '</div></div>' +
     '<div class="spts">' + fmt(sp.pts) + '</div>' +
@@ -537,31 +554,41 @@ function pictureView() {
 
 function bracketView() {
   const f = playoffField();
-  const rounds = computeBracket(f.seeds);
+  const { rounds, third } = computeBracket(f.seeds);
   const ew = effWeek();
   const regEnd = S.cfg.playoffStart - 1;
   let out = '';
   if (ew > 0 && ew <= regEnd) out += '<div class="banner info">Regular season in progress — this bracket is a projection of the current playoff picture. Seeds lock after NFL Week ' + regEnd + '.</div>';
   out += '<div class="bracket">';
-  rounds.forEach(rd => {
+  rounds.forEach((rd, ri) => {
     out += '<div class="roundcol"><div class="roundhd">' + rd.name + '<span class="wk">Wk ' + rd.week + (rd.live ? ' · <span style="color:var(--turf)">Live</span>' : '') + '</span></div>';
     rd.games.forEach(g => {
       out += '<div class="game">' + sideHtml(g.a, g.pa, g) + sideHtml(g.b, g.pb, g);
       if (rd.live) out += '<div class="ft"><span><span class="dot" style="color:var(--turf)"></span> Scoring live</span><span>high score advances</span></div>';
       out += '</div>';
     });
+    if (ri === 3) {
+      out += '<div class="roundhd" style="margin-top:16px;color:var(--dim)">Third Place<span class="wk">Wk ' + third.week + (third.live ? ' · <span style="color:var(--turf)">Live</span>' : '') + '</span></div>';
+      out += '<div class="game">' + sideHtml(third.a, third.pa, third, 'Semifinal loser') + sideHtml(third.b, third.pb, third, 'Semifinal loser');
+      if (third.live) out += '<div class="ft"><span><span class="dot" style="color:var(--turf)"></span> Scoring live</span><span>high score takes 3rd</span></div>';
+      out += '</div>';
+    }
     out += '</div>';
   });
   out += '</div>';
   const final = rounds[3] && rounds[3].games[0];
   if (final && final.winner && rounds[3].locked) {
+    const loser = (final.a && final.b) ? (final.winner.seed === final.a.seed ? final.b : final.a) : null;
+    let podium = '';
+    if (loser) podium += 'Runner-up: ' + esc(loser.team.name);
+    if (third.winner && third.locked) podium += (podium ? ' · ' : '') + 'Third place: ' + esc(third.winner.team.name);
     out += '<div class="champcard" style="margin-top:6px"><div class="lbl">Tournament champion</div><div class="nm">' + esc(final.winner.team.name) +
-      '</div><div class="sub">' + esc(final.winner.team.leagueName) + ' · Seed ' + final.winner.seed + '</div></div>';
+      '</div><div class="sub">' + esc(final.winner.team.leagueName) + ' · Seed ' + final.winner.seed + (podium ? '<br>' + podium : '') + '</div></div>';
   }
   return out;
 }
-function sideHtml(s, pts, g) {
-  if (!s) return '<div class="side tbd"><span class="seedsq">–</span><span class="nm">Winner advances</span><span class="pt">—</span></div>';
+function sideHtml(s, pts, g, ph) {
+  if (!s) return '<div class="side tbd"><span class="seedsq">–</span><span class="nm">' + (ph || 'Winner advances') + '</span><span class="pt">—</span></div>';
   let cls = 'side';
   if (g.locked && g.winner) cls += (g.winner.seed === s.seed ? ' win' : ' lose');
   else if (g.live && g.pa != null && g.pb != null && g.pa !== g.pb) {
@@ -634,7 +661,7 @@ function charitiesSetupHtml() {
     return '<div class="card"><div class="hd"><h2>Charity spotlight</h2></div><div style="padding:14px" class="help">Load your leagues first (Save &amp; load tournament above), then come back to this tab to assign each team\'s charity.</div></div>';
   }
   let out = '<div class="card"><div class="hd"><h2>Charity spotlight</h2><span class="meta">who each team plays for</span></div><div style="padding:8px 14px 14px">' +
-    '<p class="help">Each week, the previous week\'s top scorer has their charity featured in a banner at the top of the Standings page. The link is optional and makes the charity name clickable. Hit Save when you\'re done — assignments are included in your share link.</p>';
+    '<p class="help">Each week, the previous week\'s top scorer has their charity featured in a banner at the top of the Standings page. Once the playoffs begin, only teams still alive in the bracket count for the spotlight. The link is optional and makes the charity name clickable. Hit Save when you\'re done — assignments are included in your share link.</p>';
   for (const L of S.leagues) {
     out += '<div class="divlabel" style="padding-left:0">' + esc(L.league.name) + '</div>';
     for (const t of S.teams.filter(x => x.leagueId === L.id)) {
